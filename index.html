@@ -1,0 +1,206 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Ruta Óptima para Transporte de Carga con Google Maps</title>
+    <script src="https://maps.googleapis.com/maps/api/js?key=AIzaSyBWmzTi15RhXDqzrD-oo1mqODOSebT9nbU&libraries=places"></script>
+    <link href="https://maxcdn.bootstrapcdn.com/bootstrap/4.5.2/css/bootstrap.min.css" rel="stylesheet">
+    <style>
+        #map {
+            height: 500px;
+            width: 100%;
+        }
+    </style>
+    <script>
+        var map;
+        var directionsService;
+        var directionsRenderer;
+        var marker;
+        var waypoints = [];
+        var waypointMarkers = [];
+        var distanceLabel;
+
+        function initMap() {
+            console.log('Inicializando el mapa...');
+            map = new google.maps.Map(document.getElementById('map'), {
+                center: {lat: 19.8391348, lng: -98.9990375},
+                zoom: 13
+            });
+            directionsService = new google.maps.DirectionsService();
+            directionsRenderer = new google.maps.DirectionsRenderer({map: map});
+            distanceLabel = document.getElementById('distance-label');
+            console.log('Mapa y servicios de direcciones inicializados.');
+        }
+
+        function metrosAKilometros(metros) {
+            return metros / 1000;
+        }
+
+        function calcularRuta() {
+            if (!marker) {
+                console.error('Ubicación de inicio no definida.');
+                return;
+            }
+
+            var inicio = marker.getPosition();
+            var destinoInput = document.getElementById('end-coordinates').value;
+            var destinoCoords = destinoInput.split(',');
+            var destino = new google.maps.LatLng(parseFloat(destinoCoords[0]), parseFloat(destinoCoords[1]));
+
+            console.log('Calculando la ruta desde', inicio.toString(), 'hasta', destino.toString(), 'con puntos intermedios', waypoints);
+
+            obtenerMejorRuta(inicio, destino, waypoints).then(function(mejorRuta) {
+                if (mejorRuta) {
+                    console.log('Mejor ruta encontrada:', mejorRuta);
+                    mostrarRuta(mejorRuta);
+                } else {
+                    console.error('No se pudo encontrar una ruta válida.');
+                }
+            });
+        }
+
+        function obtenerMejorRuta(inicio, destino, waypoints) {
+            var permutaciones = permutarPuntos(waypoints);
+            var mejorRuta = null;
+            var mejorDistancia = Infinity;
+
+            var rutasCalculadas = permutaciones.map(function(perm) {
+                return new Promise(function(resolve) {
+                    calcularYMostrarRuta(null, inicio, destino, perm, function(resultado) {
+                        var distanciaMetros = resultado.routes[0].legs.reduce((total, leg) => total + leg.distance.value, 0);
+                        if (distanciaMetros < mejorDistancia) {
+                            mejorDistancia = distanciaMetros;
+                            mejorRuta = {inicio: inicio, destino: destino, waypoints: perm};
+                        }
+                        resolve();
+                    });
+                });
+            });
+
+            return Promise.all(rutasCalculadas).then(function() {
+                return mejorRuta;
+            });
+        }
+
+        function permutarPuntos(puntos) {
+            if (puntos.length <= 1) return [puntos];
+            var permutaciones = [];
+            for (var i = 0; i < puntos.length; i++) {
+                var punto = puntos[i];
+                var restos = puntos.slice(0, i).concat(puntos.slice(i + 1));
+                var subPermutaciones = permutarPuntos(restos);
+                for (var j = 0; j < subPermutaciones.length; j++) {
+                    permutaciones.push([punto].concat(subPermutaciones[j]));
+                }
+            }
+            return permutaciones;
+        }
+
+        function mostrarRuta(ruta) {
+            console.log('Mostrando la ruta en el mapa...');
+            calcularYMostrarRuta(directionsRenderer, ruta.inicio, ruta.destino, ruta.waypoints, function(resultado) {
+                var distanciaMetros = resultado.routes[0].legs.reduce((total, leg) => total + leg.distance.value, 0);
+                var distanciaKilometros = metrosAKilometros(distanciaMetros).toFixed(2);
+                console.log('Distancia total de la mejor ruta:', distanciaMetros, 'metros,', distanciaKilometros, 'kilómetros.');
+                distanceLabel.innerHTML = 'Distancia Total: ' + distanciaKilometros + ' km';
+            });
+        }
+
+        function calcularYMostrarRuta(renderer, inicio, destino, puntosIntermedios, callback) {
+            var solicitud = {
+                origin: inicio,
+                destination: destino,
+                waypoints: puntosIntermedios,
+                travelMode: 'DRIVING',
+                drivingOptions: {
+                    departureTime: new Date(),
+                    trafficModel: 'pessimistic'
+                }
+            };
+
+            directionsService.route(solicitud, function(resultado, estado) {
+                if (estado === 'OK') {
+                    if (renderer) {
+                        renderer.setDirections(resultado);
+                    }
+                    callback(resultado);
+                } else {
+                    console.error('No se pudo calcular la ruta:', estado);
+                }
+            });
+        }
+
+        function obtenerMiUbicacion() {
+            console.log('Obteniendo la ubicación del usuario...');
+            if (navigator.geolocation) {
+                navigator.geolocation.getCurrentPosition(function(posicion) {
+                    var inicio = new google.maps.LatLng(posicion.coords.latitude, posicion.coords.longitude);
+                    map.setCenter(inicio);
+                    if (marker) {
+                        marker.setMap(null);
+                    }
+                    marker = new google.maps.Marker({
+                        position: inicio,
+                        map: map,
+                        title: 'Mi Ubicación'
+                    });
+                }, function() {
+                    console.error('Error al obtener la ubicación.');
+                });
+            } else {
+                console.error('La geolocalización no es soportada por este navegador.');
+            }
+        }
+
+        function agregarPuntoIntermedio() {
+            var waypointInput = document.getElementById('waypoint-coordinates').value;
+            var waypointCoords = waypointInput.split(',');
+            var waypoint = new google.maps.LatLng(parseFloat(waypointCoords[0]), parseFloat(waypointCoords[1]));
+
+            var waypointMarker = new google.maps.Marker({
+                position: waypoint,
+                map: map,
+                title: 'Punto Intermedio'
+            });
+            waypointMarkers.push(waypointMarker);
+
+            waypoints.push({location: waypoint, stopover: true});
+            console.log('Punto intermedio agregado:', waypoint.toString());
+        }
+
+        function limpiarPuntosIntermedios() {
+            for (var i = 0; i < waypointMarkers.length; i++) {
+                waypointMarkers[i].setMap(null);
+            }
+            waypointMarkers = [];
+            waypoints = [];
+            console.log('Puntos intermedios limpiados.');
+        }
+    </script>
+</head>
+<body onload="initMap()">
+    <div class="container">
+        <h1 class="mt-4 mb-4">Ruta Óptima para Transporte de Carga</h1>
+        <div class="form-group">
+            <button class="btn btn-primary" onclick="obtenerMiUbicacion()">Obtener Mi Ubicación</button>
+        </div>
+        <div class="form-group">
+            <input type="text" class="form-control" id="end-coordinates" placeholder="Coordenadas de destino (lat,lng)">
+        </div>
+        <div class="form-group">
+            <input type="text" class="form-control" id="waypoint-coordinates" placeholder="Coordenadas de punto intermedio (lat,lng)">
+            <button class="btn btn-secondary mt-2" onclick="agregarPuntoIntermedio()">Agregar Punto Intermedio</button>
+            <button class="btn btn-danger mt-2" onclick="limpiarPuntosIntermedios()">Limpiar Puntos Intermedios</button>
+        </div>
+        <div class="form-group">
+            <button class="btn btn-success" onclick="calcularRuta()">Calcular Ruta</button>
+        </div>
+        <div class="form-group">
+            <label id="distance-label">Distancia Total: 0 km</label>
+        </div>
+        <div id="map"></div>
+    </div>
+    <script src="https://code.jquery.com/jquery-3.5.1.slim.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@popperjs/core@2.5.4/dist/umd/popper.min.js"></script>
+    <script src="https://maxcdn.bootstrapcdn.com/bootstrap/4.5.2/js/bootstrap.min.js"></script>
+</body>
+</html>
